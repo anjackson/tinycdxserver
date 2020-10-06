@@ -358,12 +358,12 @@
 
 
     </style>
-    <link href="lib/pikaday/1.4.0/pikaday.css" rel="stylesheet">
-    <script src="lib/vue/2.0.1/vue.js"></script>
+    <link href="lib/pikaday/${version:org.webjars.npm:pikaday}/pikaday.css" rel="stylesheet">
+    <script src="lib/vue/${version:org.webjars.npm:vue}/vue.js"></script>
     <script src="lib/vue-router/2.0.0/vue-router.js"></script>
-    <script src="lib/lodash/4.15.0/lodash.min.js"></script>
-    <script src="lib/moment/2.15.2/moment.min.js"></script>
-    <script src="lib/pikaday/1.4.0/pikaday.js"></script>
+    <script src="lib/lodash/${version:org.webjars:lodash}/lodash.min.js"></script>
+    <script src="lib/moment/${version:org.webjars.npm:moment}/moment.min.js"></script>
+    <script src="lib/pikaday/${version:org.webjars.npm:pikaday}/pikaday.js"></script>
     <script src="api.js"></script>
     <script>
         var keycloak = null;
@@ -470,7 +470,7 @@
                     fl: this.fields.join(","),
                     output: 'json'
                 };
-                fetchApi(urlTemplate("/{collection}", this.$route.params, query))
+                fetchApi(urlTemplate("{collection}", this.$route.params, query))
                         .then(r => r.json())
                         .then(rows => this.rows = rows ? rows.slice(1) : []);
             }, 250),
@@ -705,7 +705,7 @@
             },
             save: function () {
                 this.rule.urlPatterns = this.rule.urlPatterns.filter(function(pattern) { return pattern != ""; });
-                fetchApi(urlTemplate("/{collection}/access/rules", this.$route.params),
+                fetchApi(urlTemplate("{collection}/access/rules", this.$route.params),
                         {method: 'POST',
                         headers: {'Content-Type': 'application/json'},
                         body: JSON.stringify(this.rule)})
@@ -741,7 +741,7 @@
                 });
             },
             deleteRule: function () {
-                fetchApi(urlTemplate("/{collection}/access/rules/{ruleId}", this.$route.params), {method: 'DELETE'})
+                fetchApi(urlTemplate("{collection}/access/rules/{ruleId}", this.$route.params), {method: 'DELETE'})
                         .then(() => this.cancel());
             },
             fetchData: function () {

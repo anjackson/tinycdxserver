@@ -1,5 +1,20 @@
 package outbackcdx;
 
+import static outbackcdx.Json.GSON;
+import static outbackcdx.NanoHTTPD.Response.Status.*;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.UncheckedIOException;
+import java.io.UnsupportedEncodingException;
+import java.net.ServerSocket;
+import java.net.URL;
+import java.net.URLEncoder;
+import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
 import outbackcdx.NanoHTTPD.IHTTPSession;
 import outbackcdx.NanoHTTPD.Method;
 import outbackcdx.NanoHTTPD.Response;
@@ -7,19 +22,8 @@ import outbackcdx.auth.Authorizer;
 import outbackcdx.auth.Permission;
 import outbackcdx.auth.Permit;
 
-import java.io.InputStream;
-import java.net.ServerSocket;
-import java.net.URL;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-
-import static outbackcdx.Json.GSON;
-import static outbackcdx.NanoHTTPD.Response.Status.*;
-
 class Web {
+    private static final Map<String,String> versionCache = new HashMap<>();
 
     interface Handler {
         Response handle(Request request) throws Exception;
@@ -28,9 +32,11 @@ class Web {
     static class Server extends NanoHTTPD {
         private final Handler handler;
         private final Authorizer authorizer;
+        private final String contextPath;
 
-        Server(ServerSocket socket, Handler handler, Authorizer authorizer) {
+        Server(ServerSocket socket, String contextPath, Handler handler, Authorizer authorizer) {
             super(socket);
+            this.contextPath = contextPath;
             this.handler = handler;
             this.authorizer = authorizer;
         }
@@ -40,7 +46,7 @@ class Web {
             try {
                 String authnHeader = session.getHeaders().getOrDefault("authorization", "");
                 Permit permit = authorizer.verify(authnHeader);
-                Request request = new Request(session, permit);
+                NRequest request = new NRequest(session, permit, contextPath);
                 return handler.handle(request);
             } catch (Web.ResponseException e) {
                 return e.response;
@@ -51,57 +57,62 @@ class Web {
         }
     }
 
-    static class Request {
+    static class NRequest implements Request {
         private final IHTTPSession session;
         private final Permit permit;
+        private final String url;
+        private final String contextPath;
 
-        Request(IHTTPSession session, Permit permit) {
+        NRequest(IHTTPSession session, Permit permit, String contextPath) {
             this.session = session;
             this.permit = permit;
+            this.contextPath = contextPath;
+            this.url = rebuildUrl();
         }
 
-        public Method method() {
-            return session.getMethod();
+        @Override
+        public String method() {
+            return session.getMethod().name();
         }
 
+        @Override
         public String path() {
             return session.getUri();
         }
 
-        public Map<String, String> params() {
+        @Override
+        public String contextPath() {
+            return contextPath;
+        }
+
+        @Override
+        public MultiMap<String, String> params() {
             return session.getParms();
         }
 
-        public String param(String name) {
-            return session.getParms().get(name);
-        }
-
-        public String param(String name, String defaultValue) {
-            return session.getParms().getOrDefault(name, defaultValue);
-        }
-
-        public String mandatoryParam(String name) throws ResponseException {
-            String value = param(name);
-            if (value == null) {
-                throw new Web.ResponseException(badRequest("missing mandatory parameter: " + name));
-            }
-            return value;
-        }
-
+        @Override
         public String header(String name) {
             return session.getHeaders().get(name);
         }
 
+        @Override
         public InputStream inputStream() {
             return session.getInputStream();
         }
 
+        @Override
         public boolean hasPermission(Permission permission) {
             return permit.permissions.contains(permission);
         }
 
+        @Override
         public String username() {
             return permit.username;
+        }
+
+        @Override
+        public String url() {
+            return url;
         }
     }
 
@@ -138,6 +149,60 @@ class Web {
         return req -> new Response(OK, guessType(file), url.openStream());
     }
 
+    static synchronized String version(String groupId, String artifactId) {
+        String version = versionCache.get(groupId + ":" + artifactId);
+        if (version != null) return version;
+        String path = "/META-INF/maven/" + groupId + "/" + artifactId + "/pom.properties";
+        URL url = Webapp.class.getResource(path);
+        if (url == null) throw new RuntimeException("Not found on classpath: " + path);
+        Properties properties = new Properties();
+        try (InputStream stream = url.openStream()) {
+            properties.load(stream);
+        } catch (IOException e) {
+            throw new RuntimeException("Error reading " + path, e);
+        }
+        version = properties.getProperty("version");
+        versionCache.put(groupId + ":" + artifactId, version);
+        return version;
+    }
+
+    static Handler interpolated(String file) {
+        URL url = Web.class.getResource(file);
+        if (url == null) {
+            throw new IllegalArgumentException("No such resource: " + file);
+        }
+        String raw;
+        try (InputStream stream = url.openStream()) {
+            raw = slurp(stream);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        String processed = interpolate(raw);
+        return req -> new Response(OK, guessType(file), processed);
+    }
+
+    private static String interpolate(String raw) {
+        StringBuilder sb = new StringBuilder();
+        Matcher m = Pattern.compile("\\$\\{version:([^:}]+):([^:}]+)}").matcher(raw);
+        int pos = 0;
+        while (m.find()) {
+            sb.append(raw, pos, m.start());
+            sb.append(version(m.group(1), m.group(2)));
+            pos = m.end();
+        }
+        sb.append(raw, pos, raw.length());
+        return sb.toString();
+    }
+
+    private static String slurp(InputStream stream) throws IOException {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        byte[] buffer = new byte[4096];
+        for (int n = stream.read(buffer); n >= 0; n = stream.read(buffer)) {
+            baos.write(buffer, 0, n);
+        }
+        return baos.toString("utf-8");
+    }
+
     static Response jsonResponse(Object data) {
         Response response =  new Response(OK, "application/json", GSON.toJson(data));
         response.addHeader("Access-Control-Allow-Origin", "*");
@@ -154,6 +219,12 @@ class Web {
 
     static Response badRequest(String message) {
         return new Response(BAD_REQUEST, "text/plain", message);
+    }
+
+    static Response redirect(String location) {
+        Response response = new Response(TEMPORARY_REDIRECT, "text/plain", "Temporary Redirect");
+        response.addHeader("Location", location);
+        return response;
     }
 
     static class Router implements Handler {
@@ -221,11 +292,11 @@ class Web {
         }
 
         public Response handle(Request request) throws Exception {
-            if (method != null && method != request.method()) {
+            if (method != null && !request.method().equalsIgnoreCase(method.name())) {
                 return null;
             }
 
-            Matcher match = re.matcher(request.path());
+            Matcher match = re.matcher(request.relativePath());
             if (!match.matches()) {
                 return null;
             }
@@ -240,6 +311,82 @@ class Web {
 
             return handler.handle(request);
         }
+
+        @Override
+        public String toString() {
+            return method + " " + pattern;
+        }
     }
 
+    public static interface Request {
+        String method();
+
+        /**
+         * The full request path including the context path.
+         */
+        String path();
+
+        /**
+         * The request path relative to the context path.
+         */
+        default String relativePath() {
+            return path().substring(contextPath().length());
+        }
+
+        String contextPath();
+
+        MultiMap<String, String> params();
+
+        String header(String name);
+
+        InputStream inputStream();
+
+        boolean hasPermission(Permission permission);
+
+        String username();
+
+        default String param(String name) {
+            return params().get(name);
+        }
+
+        default String param(String name, String defaultValue) {
+            return params().getOrDefault(name, defaultValue);
+        }
+
+        default String mandatoryParam(String name) throws ResponseException {
+            String value = param(name);
+            if (value == null) {
+                throw new ResponseException(badRequest("missing mandatory parameter: " + name));
+            }
+            return value;
+        }
+
+        /**
+         * Should be called by constructor to stash the original url. Needs to happen
+         * before before Route.handle() because it adds path tokens to params(), making
+         * it impossible to compute the original url.
+         */
+        default String rebuildUrl() {
+            StringBuilder buf = new StringBuilder(path());
+            if (params() != null) {
+                boolean first = true;
+                for (String key: params().keySet()) {
+                    for (String value: params().getAll(key)) {
+                        buf.append(first ? '?' : '&');
+                        first = false;
+                        try {
+                            buf.append(URLEncoder.encode(key, "UTF-8"));
+                            buf.append('=');
+                            buf.append(URLEncoder.encode(value, "UTF-8"));
+                        } catch (UnsupportedEncodingException e) {
+                            throw new RuntimeException(e); // not possible
+                        }
+                    }
+                }
+            }
+            return buf.toString();
+        }
+
+        String url();
+    }
 }

@@ -28,7 +28,7 @@ public class XmlQuery {
     final long limit;
     final String queryType;
 
-    public XmlQuery(Web.Request request, Index index) {
+    public XmlQuery(Web.Request request, Index index, Iterable<FilterPlugin> filterPlugins, UrlCanonicalizer canonicalizer) {
         this.index = index;
 
         Map<String, String> params = request.params();
@@ -36,7 +36,7 @@ public class XmlQuery {
 
         accessPoint = params.get("accesspoint");
         queryType = query.getOrDefault("type", "urlquery").toLowerCase();
-        queryUrl = UrlCanonicalizer.surtCanonicalize(query.get("url"));
+        queryUrl = canonicalizer.surtCanonicalize(query.get("url"));
 
         offset = Long.parseLong(query.getOrDefault("offset", "0"));
         limit = Long.parseLong(query.getOrDefault("limit", "10000"));
@@ -101,7 +101,7 @@ public class XmlQuery {
         boolean wroteHeader = false;
         int results = 0;
         int i = 0;
-        for (Capture capture : index.query(queryUrl, accessPoint)) {
+        for (Capture capture : index.queryAP(queryUrl, accessPoint)) {
             if (i < offset) {
                 i++;
                 continue;
@@ -124,7 +124,7 @@ public class XmlQuery {
             writeElement(out, "urlkey", capture.urlkey);
             writeElement(out, "digest", capture.digest);
             writeElement(out, "httpresponsecode", capture.status);
-            writeElement(out, "robotflags", "-"); // TODO
+            writeElement(out, "robotflags", capture.robotflags);
             writeElement(out, "url", capture.original);
             writeElement(out, "capturedate", capture.timestamp);
             out.writeEndElement(); // </result>
@@ -151,7 +151,7 @@ public class XmlQuery {
     private void prefixQuery(XMLStreamWriter out) throws XMLStreamException {
         boolean wroteHeader = false;
         int i = 0;
-        Resources it = new Resources(index.prefixQuery(queryUrl, accessPoint).iterator());
+        Resources it = new Resources(index.prefixQueryAP(queryUrl, accessPoint).iterator());
         while (it.hasNext()) {
             Resource resource = it.next();
             if (i < offset) {
@@ -203,8 +203,8 @@ public class XmlQuery {
         out.writeEndElement();
     }
 
-    public static NanoHTTPD.Response query(Web.Request request, Index index) {
-        return new XmlQuery(request, index).streamResults();
+    public static NanoHTTPD.Response queryIndex(Web.Request request, Index index, Iterable<FilterPlugin> filterPlugins, UrlCanonicalizer canonicalizer) {
+        return new XmlQuery(request, index, filterPlugins, canonicalizer).streamResults();
     }
 
     /**

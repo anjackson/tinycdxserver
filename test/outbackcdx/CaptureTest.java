@@ -12,7 +12,7 @@ public class CaptureTest {
         byte[] key = src.encodeKey();
         byte[] value = src.encodeValue();
 
-        assertEquals(1, value[0]);
+        assertEquals(3, value[0]);
         assertEquals(8, value[1]);
         assertEquals('o', value[2]);
         assertEquals('r', value[3]);
@@ -22,6 +22,20 @@ public class CaptureTest {
 
         assertEquals(src.date(), dst.date());
         assertEquals(src.date().getTime(), 1388579640000L);
+    }
+
+    @Test
+    public void testV4Encoding() {
+        Capture src = dummyRecord();
+        byte[] key = src.encodeKey(4);
+        byte[] value = src.encodeValue(4);
+        Capture dst = new Capture(key, value);
+        assertFieldsEqual(src, dst);
+    }
+
+    @Test
+    public void testRange() {
+        assertEquals("bytes=1234-13578", dummyRecord().get("range"));
     }
 
     static void assertFieldsEqual(Capture src, Capture dst) {
@@ -35,6 +49,7 @@ public class CaptureTest {
         assertEquals(src.status, dst.status);
         assertEquals(src.timestamp, dst.timestamp);
         assertEquals(src.urlkey, dst.urlkey);
+        assertEquals(src.robotflags, dst.robotflags);
     }
 
     static Capture dummyRecord() {
@@ -49,6 +64,7 @@ public class CaptureTest {
         src.status = 200;
         src.timestamp = 20140101123400L;
         src.urlkey = "urlkey";
+        src.robotflags = "AFIGX";
         return src;
     }
 }
